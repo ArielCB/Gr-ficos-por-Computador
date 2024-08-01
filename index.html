@@ -1,0 +1,1739 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title></title>
+    <script type="text/javascript" src="auxiliars.js"></script>
+    <script type="text/javascript" src="shader.js"></script>
+    <script type="text/javascript" src="ubo.js"></script>
+    <script type="text/javascript" src="geometry.js"></script>
+    <script type="text/javascript" src="gl-matrix.js"></script>
+    <style type="text/css">
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      body {
+        margin: 0;
+      }
+    </style>
+    <script type="text/javascript">
+      const mat4 = glMatrix.mat4;
+      const vec3 = glMatrix.vec3;
+      const vec2 = glMatrix.vec2;
+      // Converts from degrees to radians.
+      Math.radians = function (degrees) {
+        return (degrees * Math.PI) / 180;
+      };
+
+      // Converts from radians to degrees.
+      Math.degrees = function (radians) {
+        return (radians * 180) / Math.PI;
+      };
+
+      // ---------------------------------------------------
+      // VARIABLES Y FUNCION PARA MOVER EL RATON
+      // ---------------------------------------------------
+
+      // Variables para implementar el movimiento del raton
+      var lastX = 450.0;
+      var lastY = 450.0;
+      var yaw = -90.0;
+      var pitch = 0.0;
+
+      // Funcion que mueve la camara en funcion del movimiento del raton.
+      function mouse_callback(event) {
+        var xoffset = event.clientX - lastX;
+        var yoffset = lastY - event.clientY;
+        lastX = event.clientX;
+        lastY = event.clientY;
+
+        var sensitivity = 0.3;
+        xoffset *= sensitivity;
+        yoffset *= sensitivity;
+
+        yaw += xoffset;
+        pitch += yoffset;
+
+        if (pitch > 89.0) {
+          pitch = 89.0;
+        }
+        if (pitch < -89.0) {
+          pitch = -89.0;
+        }
+
+        var direction = vec3.create();
+        direction[0] =
+          Math.cos(Math.radians(yaw)) * Math.cos(Math.radians(pitch));
+        direction[1] = Math.sin(Math.radians(pitch));
+        direction[2] =
+          Math.sin(Math.radians(yaw)) * Math.cos(Math.radians(pitch));
+        cameraFront = vec3.normalize(vec3.create(), direction);
+      }
+
+      document.addEventListener("mousemove", mouse_callback);
+    </script>
+    <script id="shader-vs" type="x-shader/x-vertex">#version 300 es
+          precision mediump float;
+
+          layout (location = 0) in vec3 aPos;
+          layout (location = 2) in vec2 aTexCoord;
+          uniform UBO {
+            mat4 projection;
+            mat4 view;
+            vec3 viewPos;
+            vec3 lightColor;
+          };
+        
+          uniform mat4 model;
+          out vec2 TexCoords;
+
+          void main()
+          {
+              gl_Position = projection * view * model * vec4(aPos, 1.0);
+              TexCoords = aTexCoord;
+          }
+    </script>
+  <script id="shader-vs-texture" type="x-shader/x-vertex">#version 300 es
+          precision mediump float;
+
+          layout (location = 0) in vec3 aPos;
+          layout (location = 1) in vec3 aNormal;
+          layout (location = 2) in vec2 aTexCoord;
+          uniform UBO {
+            mat4 projection;
+            mat4 view;
+            vec3 viewPos;
+            vec3 lightColor;
+          };
+          uniform mat4 model;
+          out vec3 Normal;
+          out vec3 fragPos;
+          out vec2 TexCoords;
+
+          void main()
+          {
+           gl_Position = projection * view * model * vec4(aPos, 1.0);
+           Normal = aNormal;
+           mat3 normalM = mat3( transpose(inverse( model ) ) );
+           Normal = normalM * aNormal;
+           fragPos = vec3(model * vec4(aPos, 1.0));
+           TexCoords = aTexCoord;
+          }
+  </script>
+  <script id="shader-vs-tierra" type="x-shader/x-vertex">#version 300 es
+    precision mediump float;
+
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aNormal;
+    layout (location = 2) in vec2 aTexCoord;
+    layout (location = 3) in vec3 aTangent;
+    layout (location = 4) in vec3 aBitangent;
+
+    uniform UBO {
+      mat4 projection;
+      mat4 view;
+      vec3 viewPos;
+      vec3 lightColor;
+    };
+    
+    uniform mat4 model;
+    out vec3 fragPos;
+    out vec2 TexCoords;
+    out mat3 TBN;
+
+    void main()
+    {
+      gl_Position = projection * view * model * vec4(aPos, 1.0);
+
+      fragPos = vec3(model * vec4(aPos, 1.0));
+      TexCoords = aTexCoord;
+
+      vec3 T = normalize(vec3(model * vec4(aTangent,   0.0)));
+      vec3 B = normalize(vec3(model * vec4(aBitangent, 0.0)));
+      vec3 N = normalize(vec3(model * vec4(aNormal,    0.0)));
+      mat3 TBN = mat3(T, B, N);
+    }
+  </script>
+
+
+    <script id="shader-fs" type="x-shader/x-fragment">#version 300 es
+      precision mediump float;
+
+      uniform vec3 color;
+      in vec2 TexCoords;
+      uniform sampler2D diffuseTexture;
+
+      out vec4 FragColor;
+
+      void main()
+      {
+        vec3 textureColor = texture(diffuseTexture, TexCoords).rgb;
+        FragColor = vec4(textureColor, 1.0);
+      }
+    </script>
+
+    <script id="shader-fs-texture" type="x-shader/x-fragment">#version 300 es
+      precision mediump float;
+
+      out vec4 FragColor;
+      in vec3 Normal;
+      in vec3 fragPos;
+      in vec2 TexCoords;
+
+      uniform UBO {
+        mat4 projection;
+        mat4 view;
+        vec3 viewPos;
+        vec3 lightColor;
+      };
+
+      uniform vec3 lightPos;
+
+      uniform float constant;
+      uniform float linear;
+      uniform float quadratic;
+
+      uniform sampler2D diffuseTexture;
+
+      void main()
+      {
+        // Calculo de la atenuacion
+        float distance = length(lightPos - fragPos);
+        float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
+
+        // Ambient
+        float ambientStrength = 0.4;
+        vec3 ambient = ambientStrength * lightColor;
+        ambient *= attenuation;
+
+        // Diffuse
+        vec3 norm = normalize(Normal);
+        vec3 lightDir = normalize(lightPos - fragPos);
+        float diff = max(dot(norm, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor;
+        diffuse *= attenuation;
+
+        // Specular
+        float specularStrength = 0.2;
+        vec3 viewDir = normalize(viewPos - fragPos);
+        vec3 reflectDir = reflect(-lightDir, norm);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+        vec3 specular = specularStrength * spec * lightColor;
+        specular *= attenuation;
+
+        // Calculo de la implementacion de la textura y las luces
+        vec3 result = (ambient + diffuse + specular);
+        vec4 textureColor = texture(diffuseTexture, TexCoords);
+        result *= textureColor.rgb;
+
+        FragColor = vec4(result, 1);
+      }
+    </script>
+    <script id="shader-fs-tierra" type="x-shader/x-fragment">#version 300 es
+      precision mediump float;
+
+      out vec4 FragColor;
+      in mat3 TBN;
+      in vec3 fragPos;
+      in vec2 TexCoords;
+
+      uniform UBO {
+        mat4 projection;
+        mat4 view;
+        vec3 viewPos;
+        vec3 lightColor;
+      };
+
+      uniform vec3 lightPos;
+
+      uniform float constant;
+      uniform float linear;
+      uniform float quadratic;
+
+      uniform sampler2D diffuseTexture;
+      uniform sampler2D normalTexture;
+      uniform sampler2D specularTexture;
+
+      void main()
+      {
+        // Obtener la normal desde la textura de normales
+        vec3 normal = texture(normalTexture, TexCoords).rgb;
+        normal = normal * 2.0 - 1.0;   
+        normal = normalize(TBN * normal);
+
+        // Calculo de la atenuacion
+        float distance = length(lightPos - fragPos);
+        float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
+
+        // Ambient
+        float ambientStrength = 0.4;
+        vec3 ambient = ambientStrength * lightColor;
+        ambient *= attenuation;
+
+        // Diffuse
+        vec3 lightDir = normalize(lightPos - fragPos);
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor;
+        diffuse *= attenuation;
+
+        // Calcular la luz especular
+        vec3 viewDir = normalize(viewPos - fragPos);
+        vec3 reflectDir = reflect(-lightDir, normal); // Dirección del reflejo
+        float specularStrength = texture(specularTexture, TexCoords).r; // Intensidad especular
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+        vec3 specular = specularStrength * spec * lightColor;
+        specular *= attenuation;
+
+        // Calculo de la implementacion de la textura y las luces
+        vec3 result = (ambient + diffuse + specular);
+        vec4 textureColor = texture(diffuseTexture, TexCoords);
+        result *= textureColor.rgb;
+
+        FragColor = vec4(result, 1);
+      }
+    </script>
+    <script id="shader-fs-nubes" type="x-shader/x-fragment">#version 300 es
+      precision mediump float;
+
+      out vec4 FragColor;
+      in vec3 Normal;
+      in vec3 fragPos;
+      in vec2 TexCoords;
+
+      uniform UBO {
+        mat4 projection;
+        mat4 view;
+        vec3 viewPos;
+        vec3 lightColor;
+      };
+
+      uniform vec3 lightPos;
+
+      uniform float constant;
+      uniform float linear;
+      uniform float quadratic;
+
+      uniform sampler2D cloudTexture;
+
+      void main()
+      {
+        // Calculo de la atenuacion
+        float distance = length(lightPos - fragPos);
+        float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
+
+        // Ambient
+        float ambientStrength = 0.4;
+        vec3 ambient = ambientStrength * lightColor;
+        ambient *= attenuation;
+
+        // Diffuse
+        vec3 norm = normalize(Normal);
+        vec3 lightDir = normalize(lightPos - fragPos);
+        float diff = max(dot(norm, lightDir), 0.0);
+        vec3 diffuse = diff * lightColor;
+        diffuse *= attenuation;
+
+        // Specular
+        float specularStrength = 0.1;
+        vec3 viewDir = normalize(viewPos - fragPos);
+        vec3 reflectDir = reflect(-lightDir, norm);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+        vec3 specular = specularStrength * spec * lightColor;
+        specular *= attenuation;
+
+        // Calculo de la implementacion de la textura y las luces
+        vec3 result = (ambient + diffuse + specular);
+        vec4 textureColor = texture(cloudTexture, TexCoords);
+        result *= textureColor.rgb;
+
+        if (textureColor.a < 0.1)
+        discard;
+
+        FragColor = vec4(result, textureColor.a);
+      }
+    </script>
+  </head>
+  <body>
+    <canvas id="myCanvas" width="500" height="500"></canvas>
+    <script type="text/javascript">
+      const gl = createContext("myCanvas");
+
+      // ---------------------------------------------------
+      // CREO UN SHADERPROGRAM POR CADA PLANETA
+      // ---------------------------------------------------
+
+      let shaderProgramSun = new ShaderProgram();
+      let shaderProgramMercury = new ShaderProgram();
+      let shaderProgramVenus = new ShaderProgram();
+      let shaderProgramEarth = new ShaderProgram();
+      let shaderProgramMoon = new ShaderProgram();
+      let shaderProgramMars = new ShaderProgram();
+      let shaderProgramJupiter = new ShaderProgram();
+      let shaderProgramSaturn = new ShaderProgram();
+      let shaderProgramUranus = new ShaderProgram();
+      let shaderProgramNeptune = new ShaderProgram();
+      let shaderProgramRing = new ShaderProgram();
+      let shaderProgramClouds = new ShaderProgram();
+
+      // ---------------------------------------------------
+      // SE CREA LA ESFERA Y LOS DISTINTOS BUFFERS
+      // ---------------------------------------------------
+
+      const sphereGeo = createSphere();
+      const ring = createRing();
+
+
+      //Calculo de las tangentes y bitangentes para usar para el mapa normal
+      let tangents = [];
+      let bitangents = [];
+
+      for (let i = 0; i < sphereGeo.indices.length; i += 3) {
+        
+        let vertices = new Float32Array (sphereGeo.vertices);
+        let normals = new Float32Array (sphereGeo.normals);
+        let texCoords = new Float32Array (sphereGeo.textCoords);
+        let indices = new Float32Array (sphereGeo.indices);
+
+        let i0 = indices[i];
+        let i1 = indices[i + 1];
+        let i2 = indices[i + 2];
+
+        let pos0 = [vertices[i0 * 3], vertices[i0 * 3 + 1], vertices[i0 * 3 + 2]];
+        let pos1 = [vertices[i1 * 3], vertices[i1 * 3 + 1], vertices[i1 * 3 + 2]];
+        let pos2 = [vertices[i2 * 3], vertices[i2 * 3 + 1], vertices[i2 * 3 + 2]];
+
+        let uv0 = [texCoords[i0 * 2], texCoords[i0 * 2 + 1]];
+        let uv1 = [texCoords[i1 * 2], texCoords[i1 * 2 + 1]];
+        let uv2 = [texCoords[i2 * 2], texCoords[i2 * 2 + 1]];
+
+        let edge1 = [pos1[0] - pos0[0], pos1[1] - pos0[1], pos1[2] - pos0[2]];
+        let edge2 = [pos2[0] - pos0[0], pos2[1] - pos0[1], pos2[2] - pos0[2]];
+
+        let deltaUV1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+        let deltaUV2 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+
+        let f = 1.0 / (deltaUV1[0] * deltaUV2[1] - deltaUV1[1] * deltaUV2[0]);
+        let tangent = [
+            f * (deltaUV2[1] * edge1[0] - deltaUV1[1] * edge2[0]),
+            f * (deltaUV2[1] * edge1[1] - deltaUV1[1] * edge2[1]),
+            f * (deltaUV2[1] * edge1[2] - deltaUV1[1] * edge2[2])
+        ];
+
+        let bitangent = [
+            f * (deltaUV1[0] * edge2[0] - deltaUV2[0] * edge1[0]),
+            f * (deltaUV1[0] * edge2[1] - deltaUV2[0] * edge1[1]),
+            f * (deltaUV1[0] * edge2[2] - deltaUV2[0] * edge1[2])
+        ];
+
+        tangents.push(...tangent, ...tangent, ...tangent);
+        bitangents.push(...bitangent, ...bitangent, ...bitangent);
+      }
+      
+
+      var VAO, VBO, VBO2, VBO3, VBO4, VBO5, EBO;
+      VAO = gl.createVertexArray();
+      VBO = gl.createBuffer();
+      VBO2 = gl.createBuffer();
+      VBO3 = gl.createBuffer();
+      VBO4 = gl.createBuffer();
+      VBO5 = gl.createBuffer();
+      EBO = gl.createBuffer();
+
+      gl.bindVertexArray(VAO);
+      // position attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(sphereGeo.vertices),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0);
+      // normal attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO2);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(sphereGeo.normals),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(1);
+      // texCoord attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO3);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(sphereGeo.texCoords),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(2);
+      // tangent attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO4);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(tangents),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(3);
+      // bitangent attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO5);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(sphereGeo.bitangents),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(4, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(4);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, EBO);
+      gl.bufferData(
+        gl.ELEMENT_ARRAY_BUFFER,
+        new Uint32Array(sphereGeo.indices),
+        gl.STATIC_DRAW
+      );
+
+      //Buffers para el anillos
+      var VAO_RING, VBO_RING, VBO2_RING, VBO3_RING, EBO_RING;
+      VAO_RING = gl.createVertexArray();
+      VBO_RING = gl.createBuffer();
+      VBO2_RING = gl.createBuffer();
+      VBO3_RING = gl.createBuffer();
+      EBO_RING = gl.createBuffer();
+
+      gl.bindVertexArray(VAO_RING);
+      // position attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO_RING);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(ring.vertices),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0);
+      // normal attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO2_RING);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(ring.normals),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(1);
+      // texCoord attribute
+      gl.bindBuffer(gl.ARRAY_BUFFER, VBO3_RING);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(ring.texCoords),
+        gl.STATIC_DRAW
+      );
+      gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(2);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, EBO_RING);
+      gl.bufferData(
+        gl.ELEMENT_ARRAY_BUFFER,
+        new Uint32Array(ring.indices),
+        gl.STATIC_DRAW
+      );
+
+
+      // Variables de la camara
+      var cameraPos = [0.0, 0.0, 20.0];
+      var cameraFront = [0.0, 0.0, -1.0];
+      var cameraUp = [0.0, 1.0, 0.0];
+      var cam = 0;
+
+      // ---------------------------------------------------
+      // SE LE ASIGNAN LOS SHADERS AL PROGRAMA CORRESPONDIENTE
+      // ---------------------------------------------------
+
+      // SOL (TIENE SHADERS DISTINTOS YA QUE SIEMPRE HA DE ESTAR ILIMINADO)
+      shaderProgramSun.createVertexShader(
+        document.getElementById("shader-vs").text
+      );
+      shaderProgramSun.createFragmentShader(
+        document.getElementById("shader-fs").text
+      );
+      shaderProgramSun.compile();
+      shaderProgramSun.link();
+
+      shaderProgramSun.autocatching();
+
+      // MERCURIO
+      shaderProgramMercury.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramMercury.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramMercury.compile();
+      shaderProgramMercury.link();
+
+      shaderProgramMercury.autocatching();
+
+      // VENUS
+      shaderProgramVenus.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramVenus.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramVenus.compile();
+      shaderProgramVenus.link();
+          
+      shaderProgramVenus.autocatching();
+
+      // TIERRA
+      shaderProgramEarth.createVertexShader(
+        document.getElementById("shader-vs-tierra").text
+      );
+      shaderProgramEarth.createFragmentShader(
+        document.getElementById("shader-fs-tierra").text
+      );
+      shaderProgramEarth.compile();
+      shaderProgramEarth.link();
+
+      shaderProgramEarth.autocatching();
+
+      // LUNA
+      shaderProgramMoon.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramMoon.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramMoon.compile();
+      shaderProgramMoon.link();
+
+      shaderProgramMoon.autocatching();
+
+      // MARTE
+      shaderProgramMars.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramMars.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramMars.compile();
+      shaderProgramMars.link();
+
+      shaderProgramMars.autocatching();
+
+      // JUPITER
+      shaderProgramJupiter.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramJupiter.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramJupiter.compile();
+      shaderProgramJupiter.link();
+
+      shaderProgramJupiter.autocatching();
+
+      // SATURNO
+      shaderProgramSaturn.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramSaturn.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramSaturn.compile();
+      shaderProgramSaturn.link();
+
+      shaderProgramSaturn.autocatching();
+
+      // URANO
+      shaderProgramUranus.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramUranus.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramUranus.compile();
+      shaderProgramUranus.link();
+
+      shaderProgramUranus.autocatching();
+
+      // NEPTUNO
+      shaderProgramNeptune.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramNeptune.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramNeptune.compile();
+      shaderProgramNeptune.link();
+
+      shaderProgramNeptune.autocatching();
+
+      // ANILLO
+      shaderProgramRing.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramRing.createFragmentShader(
+        document.getElementById("shader-fs-texture").text
+      );
+      shaderProgramRing.compile();
+      shaderProgramRing.link();
+
+      shaderProgramRing.autocatching();
+
+      // NUBES
+      shaderProgramClouds.createVertexShader(
+        document.getElementById("shader-vs-texture").text
+      );
+      shaderProgramClouds.createFragmentShader(
+        document.getElementById("shader-fs-nubes").text
+      );
+      shaderProgramClouds.compile();
+      shaderProgramClouds.link();
+
+      shaderProgramClouds.autocatching();
+
+
+      // ---------------------------------------------------
+      // SE CREA EL UBO Y SE LE ASIGNAN LOS SHADERPROGRAMS
+      // ---------------------------------------------------
+
+      let ubo = new UBO( "UBO", shaderProgramSun, [ "projection", "view", "viewPos","lightColor"]);
+      ubo.attachProgram( shaderProgramSun );
+      ubo.attachProgram( shaderProgramMercury);
+      ubo.attachProgram( shaderProgramVenus);
+      ubo.attachProgram( shaderProgramEarth);
+      ubo.attachProgram( shaderProgramMoon);
+      ubo.attachProgram( shaderProgramMars);
+      ubo.attachProgram( shaderProgramJupiter);
+      ubo.attachProgram( shaderProgramSaturn);
+      ubo.attachProgram( shaderProgramUranus);
+      ubo.attachProgram( shaderProgramNeptune);
+      ubo.attachProgram( shaderProgramRing);
+      ubo.attachProgram( shaderProgramClouds);
+
+      // ---------------------------------------------------
+      // SE ESTABLECE EL FONDO NEGRO
+      // ---------------------------------------------------
+
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+      // ---------------------------------------------------
+      // VARIABLES INICIALES (ALGUNAS EN DESUSO)
+      // ---------------------------------------------------
+
+      var colorSun = [1.0, 1.0, 0.0];
+
+      var colorEarth = [0.0, 0.0, 1.0];
+      var positionEarth = [5.0, 0.0, 0.0];
+
+      var colorMoon = [0.5, 0.5, 0.5];
+      var positionMoon = [6.5, 0.0, 0.0];
+
+      // Variables de la luz
+      var lightPos = [0.0, 0.0, 0.0];    // Posicion del foco de luz
+      var lightColor = [1.0, 1.0, 1.0];   // Color de la luz (blanco)
+
+      // Variables para la atenuacion de la luz
+      var constant = 1.0;
+      var linear = 0.045;
+      var quadratic = 0.0075;
+
+      // ---------------------------------------------------
+      // CREACION Y CARGA DE TEXTURAS
+      // ---------------------------------------------------
+      
+      // TEXTURA SOL
+      var myTexture = new Image();
+      var textureID = gl.createTexture();
+      myTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, textureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          myTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      myTexture.src = "resources/sun.png"; // Ruta relativa de la textura
+
+      // TEXTURA MERCURIO
+      var mercuryTexture = new Image();
+      var mercurytextureID = gl.createTexture();
+      mercuryTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, mercurytextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          mercuryTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      mercuryTexture.src = "resources/mercury.png"; // Ruta relativa de la textura
+
+      // TEXTURA VENUS
+      var venusTexture = new Image();
+      var venustextureID = gl.createTexture();
+      venusTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, venustextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          venusTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      venusTexture.src = "resources/venus.jpg"; // Ruta relativa de la textura
+
+      // TEXTURAS TIERRA
+      //textura difusa
+      var earthTexture = new Image();
+      var earthTextureID = gl.createTexture();
+      earthTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, earthTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          earthTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      earthTexture.src = "resources/earth_diffuse.jpg"; // Ruta relativa de la textura
+
+      //textura de normales
+      var earthNormalTexture = new Image();
+      var earthNormalTextureID = gl.createTexture();
+
+      earthNormalTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, earthNormalTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          earthNormalTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D); 
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+
+      earthNormalTexture.src = "resources/earth_normal.jpg"; // Ruta a tu mapa de normales
+
+      //textura especular
+      var earthSpecularTexture = new Image();
+      var earthSpecularTextureID = gl.createTexture();
+
+      earthSpecularTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, earthSpecularTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          earthSpecularTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.generateMipmap(gl.TEXTURE_2D); 
+        gl.bindTexture(gl.TEXTURE_2D, null); 
+        renderFunc(0.0);
+      };
+
+      earthSpecularTexture.src = "resources/earth_specular.jpg"; // Ruta a tu mapa especular
+
+      // TEXTURA LUNA
+      var moonTexture = new Image();
+      var moonTextureID = gl.createTexture();
+      moonTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, moonTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          moonTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      moonTexture.src = "resources/moon.png"; // Ruta relativa de la textura
+
+      // TEXTURA MARTE
+      var marsTexture = new Image();
+      var marsTextureID = gl.createTexture();
+      marsTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, marsTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          marsTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      marsTexture.src = "resources/marte.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA JUPITER
+      var jupiterTexture = new Image();
+      var jupiterTextureID = gl.createTexture();
+      jupiterTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, jupiterTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          jupiterTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      jupiterTexture.src = "resources/jupiter.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA SATURNO
+      var saturnTexture = new Image();
+      var saturnTextureID = gl.createTexture();
+      saturnTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, saturnTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          saturnTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      saturnTexture.src = "resources/saturno.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA URANO
+      var uranusTexture = new Image();
+      var uranusTextureID = gl.createTexture();
+      uranusTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, uranusTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          uranusTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      uranusTexture.src = "resources/urano.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA NEPTUNO
+      var neptuneTexture = new Image();
+      var neptuneTextureID = gl.createTexture();
+      neptuneTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, neptuneTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          neptuneTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      neptuneTexture.src = "resources/neptune.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA ANILLO
+      var ringTexture = new Image();
+      var ringTextureID = gl.createTexture();
+      ringTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, ringTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          ringTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      ringTexture.src = "resources/anillo.jpg"; // Ruta relativa de la textura
+
+      // TEXTURA NUBES
+      var cloudTexture = new Image();
+      var cloudTextureID = gl.createTexture();
+      cloudTexture.onload = function () {
+        gl.bindTexture(gl.TEXTURE_2D, cloudTextureID);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          cloudTexture
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        renderFunc(0.0);
+      };
+      cloudTexture.src = "resources/earth_clouds.png"; // Ruta relativa de la textura
+
+      function renderFunc(time) {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.enable(gl.DEPTH_TEST);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+        time *= 0.001; // to seconds
+
+        var proj = mat4.create();
+        mat4.perspective(
+          proj,
+          Math.radians(60.0),
+          gl.canvas.width / gl.canvas.height,
+          0.001,
+          1000.0
+        );
+        var view = mat4.create();
+        var modelSun = mat4.create();
+        var modelMercury = mat4.create();
+        var modelVenus = mat4.create();
+        var modelEarth = mat4.create();
+        var modelMoon = mat4.create();
+        var modelMars = mat4.create();
+        var modelJupiter = mat4.create();
+        var modelSaturn = mat4.create();
+        var modelUranus = mat4.create();
+        var modelNeptune = mat4.create();
+        var modelRing = mat4.create();
+        var modelClouds = mat4.create();
+
+        mat4.translate(modelSun, modelSun, [0.0, 0.0, 0.0]);
+
+        if (cam!=0){
+          cameraPos = [
+          9.0 * Math.cos(time),
+          2.0,
+          9.0 * Math.sin(time),
+          ];
+
+        }
+
+        mat4.lookAt(
+          view,
+          cameraPos,
+          [
+            cameraPos[0] + cameraFront[0],
+            cameraPos[1] + cameraFront[1],
+            cameraPos[2] + cameraFront[2],
+          ],
+          cameraUp
+        );
+
+        shaderProgramSun.bind();
+
+        shaderProgramSun.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE0);
+        shaderProgramSun.setUniform1i("diffuseTexture", 0);
+        gl.bindTexture(gl.TEXTURE_2D, textureID);
+
+        mat4.scale(modelSun, modelSun, [2.0, 2.0, 2.0]); // Escalado de la Tierra
+
+        shaderProgramSun.setUniformMat4("model", modelSun);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // MERCURIO
+        shaderProgramMercury.bind();
+
+        shaderProgramMercury.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        const vp = vec3.fromValues(cameraPos[0], cameraPos[1], cameraPos[2]);
+        const lc = vec3.fromValues(lightColor[0], lightColor[1], lightColor[2]);
+        
+        ubo.uploadSingleData( "projection", proj );
+        ubo.uploadSingleData( "view", view );
+        ubo.uploadSingleData("viewPos", vp);
+        ubo.uploadSingleData("lightColor", lc);
+        //ubo.uploadAll( );
+
+        shaderProgramMercury.setUniform1f("constant", constant);
+        shaderProgramMercury.setUniform1f("linear", linear)
+        shaderProgramMercury.setUniform1f("quadratic", quadratic)
+
+        shaderProgramMercury.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramMercury.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, mercurytextureID);
+
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var mercuryPosition = [
+          3.0,
+          0.0,
+          0.0,
+        ];
+
+        var mercuryOrbitRadius = 3.0; // Radio de la órbita de la Mercurio
+        var mercuryOrbitSpeed = -1.608; // Velocidad de rotación de la Mercurio alrededor del sol
+        var mercuryOrbitAngle = mercuryOrbitSpeed * time;
+
+        mat4.rotate(modelMercury, modelMercury, mercuryOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelMercury, modelMercury, mercuryPosition);
+
+        // Calcular el ángulo de Mercurio de la Tierra sobre su propio eje
+        var mercuryRotationSpeed = 0.0129; // Velocidad de rotación de la Mercurio sobre su propio eje
+        var mercuryRotationAngle = mercuryRotationSpeed * time;
+
+
+        mat4.rotateY(modelMercury, modelMercury, mercuryRotationAngle);
+        mat4.scale(modelMercury, modelMercury, [0.35, 0.35, 0.35]);
+
+        shaderProgramMercury.setUniformMat4("model", modelMercury);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // VENUS
+        shaderProgramVenus.bind();
+
+        shaderProgramVenus.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramVenus.setUniform1f("constant", constant);
+        shaderProgramVenus.setUniform1f("linear", linear)
+        shaderProgramVenus.setUniform1f("quadratic", quadratic)
+
+        shaderProgramVenus.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramVenus.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, venustextureID);
+
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var venusOrbitRadius = 6.0; // Radio de la órbita de la Venus
+        var venusOrbitSpeed = -1.176; // Velocidad de rotación de la Venus alrededor del sol
+        var venusOrbitAngle = venusOrbitSpeed * time;
+        var venusPosition = [
+          6.0,
+          0.0,
+          0.0
+        ];
+        // Calcular el ángulo de rotación de la Venus sobre su propio eje
+        var venusRotationSpeed =  0.0078; 
+        var venusRotationAngle = venusRotationSpeed * time;
+
+        mat4.rotate(modelVenus, modelVenus, venusOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelVenus, modelVenus, venusPosition);
+        mat4.rotateY(modelVenus, modelVenus, venusRotationAngle);
+        mat4.scale(modelVenus, modelVenus, [0.6, 0.6, 0.6]); 
+
+        shaderProgramVenus.setUniformMat4("model", modelVenus);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // Tierra
+        shaderProgramEarth.bind();
+
+        shaderProgramEarth.setUniform3f(
+          "lightPos",
+          ...lightPos
+        );
+
+        shaderProgramEarth.setUniform1f("constant", constant);
+        shaderProgramEarth.setUniform1f("linear", linear)
+        shaderProgramEarth.setUniform1f("quadratic", quadratic)
+
+        // Declarar uniformes
+        shaderProgramEarth.createUniform("diffuseTexture"); 
+        shaderProgramEarth.createUniform("normalTexture"); 
+        shaderProgramEarth.createUniform("specularTexture");
+
+        gl.activeTexture(gl.TEXTURE1); 
+        gl.bindTexture(gl.TEXTURE_2D, earthTextureID); 
+        shaderProgramEarth.setUniform1i("diffuseTexture", 1);// Vincular la textura difusa
+
+        gl.activeTexture(gl.TEXTURE2); 
+        gl.bindTexture(gl.TEXTURE_2D, earthNormalTextureID);
+        shaderProgramEarth.setUniform1i("normalTexture", 2);  // Vincular la textura de normales
+
+        gl.activeTexture(gl.TEXTURE3); 
+        gl.bindTexture(gl.TEXTURE_2D, earthSpecularTextureID);
+        shaderProgramEarth.setUniform1i("specularTexture", 3); // Vincular la textura especular
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var earthOrbitRadius = 9.0; // Radio de la órbita de la Tierra
+        var earthOrbitSpeed = -1; // Velocidad de rotación de la Tierra alrededor del sol
+        var earthOrbitAngle = earthOrbitSpeed * time;
+        var earthPosition = [
+          9.0,
+          0.0,
+          0.0,
+        ];
+
+        // Calcular el ángulo de rotación de la Tierra sobre su propio eje
+        var earthRotationSpeed = 1.5; 
+        var earthRotationAngle = earthRotationSpeed * time;
+
+        mat4.rotate(modelEarth, modelEarth, earthOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelEarth, modelEarth, earthPosition);
+        mat4.rotateY(modelEarth, modelEarth, earthRotationAngle);
+        mat4.scale(modelEarth, modelEarth, [0.6, 0.6, 0.6]); 
+
+        shaderProgramEarth.setUniformMat4("model", modelEarth);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // Luna
+        shaderProgramMoon.bind();
+
+        shaderProgramMoon.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramMoon.setUniform1f("constant", constant);
+        shaderProgramMoon.setUniform1f("linear", linear)
+        shaderProgramMoon.setUniform1f("quadratic", quadratic)
+
+        shaderProgramMoon.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE3);
+        shaderProgramMoon.setUniform1i("diffuseTexture", 3);
+        gl.bindTexture(gl.TEXTURE_2D, moonTextureID);
+
+        // ---------------------------------------------------
+        // TRANSLACION
+        // ---------------------------------------------------
+        var moonOrbitRadius = 2.5; // Radio de la órbita de la Luna
+        var moonOrbitSpeed = -3; // Velocidad de rotación de la Luna alrededor de la Tierra
+        var moonOrbitAngle = moonOrbitSpeed * time;
+        var moonPosition = [
+          2.5,
+          0.0,
+          0.0,
+        ];
+
+        mat4.multiply(modelMoon, modelMoon, modelEarth);
+        mat4.rotate(modelMoon, modelMoon, moonOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelMoon, modelMoon, moonPosition);
+        mat4.scale(modelMoon, modelMoon, [0.3, 0.3, 0.3]); 
+
+        shaderProgramMoon.setUniformMat4("model", modelMoon);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // MARTE
+        shaderProgramMars.bind();
+
+        shaderProgramMars.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramMars.setUniform1f("constant", constant);
+        shaderProgramMars.setUniform1f("linear", linear)
+        shaderProgramMars.setUniform1f("quadratic", quadratic)
+
+        shaderProgramMars.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramMars.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, marsTextureID);
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var marsOrbitRadius = 12.0; // Radio de la órbita de Marte
+        var marsOrbitSpeed = -0.810; // Velocidad de rotación de Marte alrededor del sol
+        var marsOrbitAngle = marsOrbitSpeed * time;
+        var marsPosition = [
+          marsOrbitRadius,
+          0.0,
+          0.0,
+        ];
+
+        // Calcular el ángulo de rotación de Marte sobre su propio eje
+        var marsRotationSpeed = 1.035; // Velocidad de rotación de Marte sobre su propio eje
+        var marsRotationAngle = marsRotationSpeed * time;
+        mat4.rotate(modelMars, modelMars, marsOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelMars, modelMars, marsPosition);
+        mat4.rotateY(modelMars, modelMars, marsRotationAngle);
+        mat4.scale(modelMars, modelMars, [0.45, 0.45, 0.45]);
+
+        shaderProgramMars.setUniformMat4("model", modelMars);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // JUPITER
+        shaderProgramJupiter.bind();
+
+        shaderProgramJupiter.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramJupiter.setUniform1f("constant", constant);
+        shaderProgramJupiter.setUniform1f("linear", linear)
+        shaderProgramJupiter.setUniform1f("quadratic", quadratic)
+
+        shaderProgramJupiter.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramJupiter.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, jupiterTextureID);
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var jupiterOrbitRadius = 15.0; // Radio de la órbita de Jupiter
+        var jupiterOrbitSpeed = -0.4388; // Velocidad de rotación de Jupiter alrededor del sol
+        var jupiterOrbitAngle = jupiterOrbitSpeed * time;
+        var jupiterPosition = [
+          jupiterOrbitRadius,
+          0.0,
+          0.0,
+        ];
+
+        // Calcular el ángulo de rotación de Jupiter sobre su propio eje
+        var jupiterRotationSpeed = 54.4; // Velocidad de rotación de Jupiter sobre su propio eje
+        var jupiterRotationAngle = jupiterRotationSpeed * time;
+
+        mat4.rotate(modelJupiter, modelJupiter, jupiterOrbitAngle,[0, 1, 0]);
+        mat4.translate(modelJupiter, modelJupiter, jupiterPosition);
+        mat4.rotateY(modelJupiter, modelJupiter, jupiterRotationAngle);
+
+        shaderProgramJupiter.setUniformMat4("model", modelJupiter);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // SATURNO
+        shaderProgramSaturn.bind();
+
+        shaderProgramSaturn.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramSaturn.setUniform1f("constant", constant);
+        shaderProgramSaturn.setUniform1f("linear", linear)
+        shaderProgramSaturn.setUniform1f("quadratic", quadratic)
+
+        shaderProgramSaturn.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramSaturn.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, saturnTextureID);
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var saturnOrbitRadius = 18.0; // Radio de la órbita de Saturno
+        var saturnOrbitSpeed = -0.3236; // Velocidad de rotación de Saturno alrededor del sol
+        var saturnOrbitAngle = saturnOrbitSpeed * time;
+        var saturnPosition = [
+          saturnOrbitRadius,
+          0.0,
+          0.0,
+        ];
+        // Calcular el ángulo de rotación de Saturno sobre su propio eje
+        var saturnRotationSpeed = 44.01; // Velocidad de rotación de Saturno sobre su propio eje
+        var saturnRotationAngle = saturnRotationSpeed * time;
+
+        mat4.rotate(modelSaturn, modelSaturn, saturnOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelSaturn, modelSaturn, saturnPosition);
+        mat4.rotateY(modelSaturn, modelSaturn, saturnRotationAngle);
+        mat4.scale(modelSaturn, modelSaturn, [0.9, 0.9, 0.9]);
+
+        shaderProgramSaturn.setUniformMat4("model", modelSaturn);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // URANO
+        shaderProgramUranus.bind();
+
+        shaderProgramUranus.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramUranus.setUniform1f("constant", constant);
+        shaderProgramUranus.setUniform1f("linear", linear)
+        shaderProgramUranus.setUniform1f("quadratic", quadratic)
+
+        shaderProgramUranus.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramUranus.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, uranusTextureID);
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var uranusOrbitRadius = 21.0; // Radio de la órbita de Urano
+        var uranusOrbitSpeed = -0.2284; // Velocidad de rotación de Urano alrededor del sol
+        var uranusOrbitAngle = uranusOrbitSpeed * time;
+        var uranusPosition = [
+          uranusOrbitRadius,
+          0.0,
+          0.0,
+        ];
+        // Calcular el ángulo de rotación de Urano sobre su propio eje
+        var uranusRotationSpeed = 17.68; // Velocidad de rotación de Urano sobre su propio eje
+        var uranusRotationAngle = uranusRotationSpeed * time;
+
+        mat4.rotate(modelUranus, modelUranus, uranusOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelUranus, modelUranus, uranusPosition);
+        mat4.rotateY(modelUranus, modelUranus, uranusRotationAngle);
+        mat4.scale(modelUranus, modelUranus, [0.75, 0.75, 0.75]); 
+
+        shaderProgramUranus.setUniformMat4("model", modelUranus);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // NEPTUNO
+        shaderProgramNeptune.bind();
+
+        shaderProgramNeptune.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+
+        shaderProgramNeptune.setUniform1f("constant", constant);
+        shaderProgramNeptune.setUniform1f("linear", linear)
+        shaderProgramNeptune.setUniform1f("quadratic", quadratic)
+
+        shaderProgramNeptune.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramNeptune.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, neptuneTextureID);
+
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        var neptuneOrbitRadius = 24.0; // Radio de la órbita de Neptuno
+        var neptuneOrbitSpeed = -0.1822; // Velocidad de rotación de Neptuno alrededor del sol
+        var neptuneOrbitAngle = neptuneOrbitSpeed * time;
+        var neptunePosition = [
+          neptuneOrbitRadius,
+          0.0,
+          0.0,
+        ];
+
+        // Calcular el ángulo de rotación de Neptuno sobre su propio eje
+        var neptuneRotationSpeed = 11.61; // Velocidad de rotación de Neptuno sobre su propio eje
+        var neptuneRotationAngle = neptuneRotationSpeed * time;
+
+        mat4.rotate(modelNeptune, modelNeptune, neptuneOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelNeptune, modelNeptune, neptunePosition);
+        mat4.rotateY(modelNeptune, modelNeptune, neptuneRotationAngle);
+        mat4.scale(modelNeptune, modelNeptune, [0.72, 0.72, 0.72]); 
+
+        shaderProgramNeptune.setUniformMat4("model", modelNeptune);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // ANILLO
+        shaderProgramRing.bind();
+
+        shaderProgramRing.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+        shaderProgramRing.setUniform1f("constant", constant);
+        shaderProgramRing.setUniform1f("linear", linear)
+        shaderProgramRing.setUniform1f("quadratic", quadratic)
+
+        shaderProgramRing.createUniform("diffuseTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramRing.setUniform1i("diffuseTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, ringTextureID);
+        var ringPosition = [modelSaturn[12],modelSaturn[13], modelSaturn[14]];
+
+        
+        mat4.translate(modelRing, modelRing, ringPosition);
+        mat4.rotateX(modelRing, modelRing, Math.PI/3);
+
+        mat4.scale(modelRing, modelRing, [1.25, 1.25, 1.25]); 
+
+        shaderProgramRing.setUniformMat4("model", modelRing);
+
+        gl.bindVertexArray(VAO_RING);
+        gl.drawElements(
+          gl.TRIANGLES,
+          ring.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // NUBES
+        shaderProgramClouds.bind();
+
+        shaderProgramClouds.setUniform3f(
+          "lightPos",
+          lightPos[0],
+          lightPos[1],
+          lightPos[2]
+        );
+
+
+        shaderProgramClouds.setUniform1f("constant", constant);
+        shaderProgramClouds.setUniform1f("linear", linear)
+        shaderProgramClouds.setUniform1f("quadratic", quadratic)
+
+        shaderProgramClouds.createUniform("cloudTexture");
+
+        // Renderizado de la textura
+        gl.activeTexture(gl.TEXTURE1);
+        shaderProgramClouds.setUniform1i("cloudTexture", 1);
+        gl.bindTexture(gl.TEXTURE_2D, cloudTextureID);
+
+        // ---------------------------------------------------
+        // ROTACION Y TRANSLACION
+        // ---------------------------------------------------
+        
+
+        // Calcular el ángulo de rotación de la Tierra sobre su propio eje
+        var cloudRotationSpeed = 2.0; 
+        var cloudRotationAngle = cloudRotationSpeed * time;
+
+        mat4.rotate(modelClouds, modelClouds, earthOrbitAngle, [0, 1, 0]);
+        mat4.translate(modelClouds, modelClouds, earthPosition);
+        mat4.rotateY(modelClouds, modelClouds, cloudRotationAngle);
+        mat4.scale(modelClouds, modelClouds, [0.62, 0.62, 0.62]); 
+
+        shaderProgramClouds.setUniformMat4("model", modelClouds);
+
+        // Habilitar blending
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        gl.bindVertexArray(VAO);
+        gl.drawElements(
+          gl.TRIANGLES,
+          sphereGeo.indices.length,
+          gl.UNSIGNED_INT,
+          0
+        );
+
+        // Deshabilitar blending
+        gl.disable(gl.BLEND);
+
+        requestAnimationFrame(renderFunc);
+      }
+
+      document.addEventListener("keydown", function (event) {
+        var step = 0.5;
+
+        // Posicion de la camara
+        if (event.keyCode == 37) {
+          // Flecha izquierda
+          cameraPos[0] -= step; // Disminuye la posicion X de la camara
+        } else if (event.keyCode == 39) {
+          // Flecha derecha
+          cameraPos[0] += step; // Aumenta la poscion X de la camara
+        } else if (event.keyCode == 38) {
+          // Flecha arriba
+          cameraPos[1] += step; // Aumenta la poscion Y de la camara
+        } else if (event.keyCode == 40) {
+          // Flecha abajo
+          cameraPos[1] -= step; // Disminuye la posicion X de la camara
+        } else if (event.keyCode == 188) {
+          // ,
+          cameraPos[2] += step; // Aumenta la poscion Z de la camara
+        } else if (event.keyCode == 190) {
+          // .
+          cameraPos[2] -= step; // Disminuye la posicion Z de la camara
+        }
+        if (event.keyCode == 67){
+          // C
+          cam = (cam + 1)%2;    // Cambia la camara de modo 
+        }
+      });
+
+      function resizeCanvas() {
+        const canvas = gl.canvas;
+
+        // Lookup the size the browser is displaying the canvas in CSS pixels.
+        const displayWidth = window.innerWidth;
+        const displayHeight = window.innerHeight;
+
+        // Check if the canvas is not the same size.
+        const needResize =
+          canvas.width !== displayWidth || canvas.height !== displayHeight;
+
+        if (needResize) {
+          // Make the canvas the same size
+          canvas.width = displayWidth;
+          canvas.height = displayHeight;
+          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        }
+      }
+
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+
+      renderFunc(0.0);
+    </script>
+  </body>
+</html>
